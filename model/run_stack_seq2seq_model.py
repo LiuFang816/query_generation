@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import nltk
 from data.data_reader import *
 from model.stack_seq2seq import *
 import time
@@ -6,9 +7,9 @@ from datetime import timedelta
 import numpy as np
 flags=tf.flags
 flags.DEFINE_string('data_path','../data','data path')
-flags.DEFINE_string('save_path','../data/checkpoints/stack_seq2seq/best_validation','best val save path')
-flags.DEFINE_string('save_dir','../data/checkpoints/stack_seq2seq','save dir')
-flags.DEFINE_string('tensorboard_dir','../data/tensorboard/stack_seq2seq','tensorboard path')
+flags.DEFINE_string('save_path','../data/checkpoints/stack_seq2seq_noatt/best_validation','best val save path')
+flags.DEFINE_string('save_dir','../data/checkpoints/stack_seq2seq_noatt','save dir')
+flags.DEFINE_string('tensorboard_dir','../data/tensorboard/stack_seq2seq_noatt','tensorboard path')
 flags=flags.FLAGS
 
 class Config:
@@ -24,7 +25,7 @@ class Config:
     num_epochs=50
     START_ID=435
     num_layers=2
-    use_attention=True
+    use_attention=False
     mode='test'
     save_per_batch=50
     print_per_batch=100
@@ -42,20 +43,33 @@ def get_time_dif(start_time):
     return timedelta(seconds=int(round(time_dif)))
 
 
-def evaluate(sess,x_,y_):
+def evaluate(sess,x_,y_,id_to_word):
     data_len=len(x_)
     eval_batch=batch_iter(x_,y_,config.batch_size)
     total_loss=0.0
     total_acc=0.0
+    predictions=[]
+    targets=[]
     for x_batch,y_batch in eval_batch:
         batch_len=len(x_batch)
         feed_dict=feed_data(x_batch,y_batch)
-        loss,acc=sess.run([model.loss,model.acc],feed_dict=feed_dict)
+        loss,acc,prediction=sess.run([model.loss,model.acc,model.decoder_prediction],feed_dict=feed_dict)
         # loss,acc=sess.run([model.loss,model.acc],feed_dict=feed_dict)
         total_loss+=loss*batch_len
         total_acc+=acc*batch_len
-    # return total_loss/data_len
-    return total_loss/data_len,total_acc/data_len
+        pre=[]
+        tar=[]
+        for i in prediction[0]:
+            pre.append(id_to_word[i])
+        for i in y_batch[0]:
+            tar.append(id_to_word[i])
+        print(pre)
+        print(tar)
+        print('--------------------')
+        predictions.extend(prediction.tolist())
+        targets.extend(y_batch.tolist())
+    # return total_loss/data_len,total_acc/data_len
+    return total_loss/data_len,total_acc/data_len,predictions,targets
 
 
 
@@ -95,17 +109,17 @@ def train(id_to_word):
                     loss,prediction,acc,temp,correct=sess.run([model.loss,model.decoder_prediction,model.acc,model.temp,model.correct],feed_dict=feed_dict)
                     # loss,acc,prediction=sess.run([model.loss,model.acc,model.predict_class],feed_dict=feed_dict)
                     loss_val,acc_val=evaluate(sess,val_inputs,val_outouts)
-                    # if acc_val>best_eval_acc:
-                    #     best_eval_acc=acc_val
-                    #     last_improved=total_batch
-                    #     saver.save(sess,flags.save_path)
-                    #     improved_str='*'
-                    # else:
-                    #     improved_str=''
+                    if acc_val>best_eval_acc:
+                        best_eval_acc=acc_val
+                        last_improved=total_batch
+                        saver.save(sess,flags.save_path)
+                        improved_str='*'
+                    else:
+                        improved_str=''
                     time_dif=get_time_dif(start_time)
                     print(temp)
                     print(correct)
-                    print('train loss: %.3f, train acc: %.3f, val loss: %.3f, train acc: %.3f'%(loss,acc,loss_val,acc_val))
+                    print('train loss: %.3f, train acc: %.3f, val loss: %.3f, val acc: %.3f, %s'%(loss,acc,loss_val,acc_val,improved_str))
                     targets=[]
                     for i in y_batch[0]:
                         targets.append(id_to_word[i])
@@ -131,18 +145,23 @@ def train(id_to_word):
 
 
 import json
-def test():
+def test(id_to_word):
     Config = tf.ConfigProto()
     Config.gpu_options.allow_growth = True
     with tf.Session(config=Config) as sess:
         sess.run(tf.global_variables_initializer())
         saver=tf.train.Saver()
         saver.restore(sess,flags.save_path)
-        test_loss,test_acc=evaluate(sess,test_inputs,test_outputs)
+        test_loss,test_acc,predictions,targets=evaluate(sess,test_inputs,test_outputs,id_to_word)
         msg='Test Loss:{0:>6.2}, Test Acc:{1:>7.2%}'
         print(msg.format(test_loss,test_acc))
-
-
+        # print(predictions[0])
+        # print(targets[0])
+        with open('pre.txt','w') as f:
+            # print(predictions)
+            f.write(json.dumps(predictions))
+        with open('tar.txt','w') as f:
+            f.write(json.dumps(targets))
 
 
 if __name__ == '__main__':
@@ -163,4 +182,31 @@ if __name__ == '__main__':
     if config.mode=='train':
         train(id_to_word)
     else:
-        test()
+        test(id_to_word)
+
+# hypothesis = ['This', 'is', 'cat']
+# reference = ['This', 'is', 'cat']
+# BLEUscore = nltk.translate.bleu_score.sentence_bleu([reference], hypothesis, weights = [1])
+# print(BLEUscore)
+def get_blue(target_file,pre_file):
+    with open(target_file,'r') as f:
+        target=json.load(f)
+    with open(pre_file,'r') as f:
+        prediction=json.load(f)
+    clean_target=[]
+    clean_prediction=[]
+    for i in range(len(prediction)):
+        index=prediction[i].index(433)
+        prediction[i]=prediction[i][:index]
+    for i in range(len(target)):
+        index=target[i].index(433)
+        target[i]=target[i][:index]
+    for i in range(len(prediction)):
+        if (len(prediction[i])>=4) & (len(target[i])>=4):
+            clean_prediction.append(prediction[i])
+            clean_target.append(target[i])
+    BLEU=[]
+    for i in range(len(clean_prediction)):
+        BLEU.append(nltk.translate.bleu_score.sentence_bleu([clean_target[i]], clean_prediction[i]))
+    print(sum(BLEU)/len(BLEU))
+get_blue('tar.txt','pre.txt')
