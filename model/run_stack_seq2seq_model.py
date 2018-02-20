@@ -7,9 +7,9 @@ from datetime import timedelta
 import numpy as np
 flags=tf.flags
 flags.DEFINE_string('data_path','../data','data path')
-flags.DEFINE_string('save_path','../data/checkpoints/stack_seq2seq_noatt/best_validation','best val save path')
-flags.DEFINE_string('save_dir','../data/checkpoints/stack_seq2seq_noatt','save dir')
-flags.DEFINE_string('tensorboard_dir','../data/tensorboard/stack_seq2seq_noatt','tensorboard path')
+flags.DEFINE_string('save_path','../data/checkpoints/stack_seq2seq/best_validation','best val save path')
+flags.DEFINE_string('save_dir','../data/checkpoints/stack_seq2seq','save dir')
+flags.DEFINE_string('tensorboard_dir','../data/tensorboard/stack_seq2seq','tensorboard path')
 flags=flags.FLAGS
 
 class Config:
@@ -25,8 +25,8 @@ class Config:
     num_epochs=50
     START_ID=435
     num_layers=2
-    use_attention=False
-    mode='test'
+    use_attention=True
+    mode='train'
     save_per_batch=50
     print_per_batch=100
 
@@ -57,15 +57,7 @@ def evaluate(sess,x_,y_,id_to_word):
         # loss,acc=sess.run([model.loss,model.acc],feed_dict=feed_dict)
         total_loss+=loss*batch_len
         total_acc+=acc*batch_len
-        pre=[]
-        tar=[]
-        for i in prediction[0]:
-            pre.append(id_to_word[i])
-        for i in y_batch[0]:
-            tar.append(id_to_word[i])
-        print(pre)
-        print(tar)
-        print('--------------------')
+
         predictions.extend(prediction.tolist())
         targets.extend(y_batch.tolist())
     # return total_loss/data_len,total_acc/data_len
@@ -108,7 +100,7 @@ def train(id_to_word):
                 if total_batch%config.print_per_batch==0:
                     loss,prediction,acc,temp,correct=sess.run([model.loss,model.decoder_prediction,model.acc,model.temp,model.correct],feed_dict=feed_dict)
                     # loss,acc,prediction=sess.run([model.loss,model.acc,model.predict_class],feed_dict=feed_dict)
-                    loss_val,acc_val=evaluate(sess,val_inputs,val_outouts)
+                    loss_val,acc_val,_,_=evaluate(sess,val_inputs,val_outouts,id_to_word)
                     if acc_val>best_eval_acc:
                         best_eval_acc=acc_val
                         last_improved=total_batch
@@ -117,8 +109,6 @@ def train(id_to_word):
                     else:
                         improved_str=''
                     time_dif=get_time_dif(start_time)
-                    print(temp)
-                    print(correct)
                     print('train loss: %.3f, train acc: %.3f, val loss: %.3f, val acc: %.3f, %s'%(loss,acc,loss_val,acc_val,improved_str))
                     targets=[]
                     for i in y_batch[0]:
@@ -196,11 +186,13 @@ def get_blue(target_file,pre_file):
     clean_target=[]
     clean_prediction=[]
     for i in range(len(prediction)):
-        index=prediction[i].index(433)
-        prediction[i]=prediction[i][:index]
+        if 433 in prediction[i]:
+            index=prediction[i].index(433)
+            prediction[i]=prediction[i][:index]
     for i in range(len(target)):
-        index=target[i].index(433)
-        target[i]=target[i][:index]
+        if 433 in target[i]:
+            index=target[i].index(433)
+            target[i]=target[i][:index]
     for i in range(len(prediction)):
         if (len(prediction[i])>=4) & (len(target[i])>=4):
             clean_prediction.append(prediction[i])
@@ -209,4 +201,4 @@ def get_blue(target_file,pre_file):
     for i in range(len(clean_prediction)):
         BLEU.append(nltk.translate.bleu_score.sentence_bleu([clean_target[i]], clean_prediction[i]))
     print(sum(BLEU)/len(BLEU))
-get_blue('tar.txt','pre.txt')
+# get_blue('tar.txt','pre.txt')
